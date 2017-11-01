@@ -1,6 +1,7 @@
 import * as ts from "typescript";
 import * as fs from "fs";
 
+// boilerplate
 const host: ts.LanguageServiceHost = {
     getCompilationSettings: () => ({}),
     getScriptFileNames: () => ["example.ts"],
@@ -18,104 +19,35 @@ const host: ts.LanguageServiceHost = {
     getNewLine: () => "\n"
 };
 const languageService = ts.createLanguageService(host);
+
+// read example.ts, make a SourceFile out of it
 const exampleSource = fs.readFileSync("example.ts", "utf8");
 const sourceFile = ts.createSourceFile("example.ts", exampleSource, ts.ScriptTarget.ES2015);
 
+// node.getText() has a bug, this is a workaround. https://github.com/Microsoft/TypeScript/issues/19670
 function getText(node: ts.Node) {
     return sourceFile.text.substring(node.getStart(sourceFile), node.getEnd());
 }
 
-let updated: ts.Node;
-function visit(parent: ts.Node, node: ts.Node, ind: string) {
-    console.log(ind + ts.SyntaxKind[node.kind] + "\n>>>getFullText:" + node.getFullText(sourceFile).replace(/\n/g, "\\n") + "\ngetText:" + getText(node).replace(/\n/g, "\\n"));
-    if (ts.isIfStatement(node)) {
-        console.log(ind + ">>>childCount:" + node.getChildCount(sourceFile));
-        const conditional = node.expression;
-        console.log(ind + ">>>conditional:" + ts.SyntaxKind[conditional.kind]);
-        if (conditional.kind == ts.SyntaxKind.FalseKeyword) {
-            console.log(ind + "parent: " + ts.SyntaxKind[parent.kind]);
-            if (ts.isBlock(parent)) {
-                console.log(parent.statements.length);
-                updated = ts.updateBlock(parent, parent.statements.slice(1));
-            }
-        }
-    }
-    ts.forEachChild(node, (child: ts.Node) => {
-        visit(node, child, ind + "  ");
-    });
-}
-
-visit(null, sourceFile, "");
-visit(null, updated, "");
-visit(null, sourceFile, "");
-
-const resultFile = ts.createSourceFile("someFileName.ts", "", ts.ScriptTarget.Latest, /*setParentNodes*/ false, ts.ScriptKind.TS);
 const printer = ts.createPrinter({
     newLine: ts.NewLineKind.LineFeed,
     removeComments: false
 });
-const result = printer.printNode(ts.EmitHint.Unspecified, updated, resultFile);
 
-console.log(result);
+function truncString(s: string) {
+	if (s.length > 100) {
+		return s.substring(0, 100) + "...";
+	} else {
+		return s;
+	}
+}
 
-const mathTransformer = <T extends ts.Node>(context: ts.TransformationContext) => (rootNode: T) => {
-    function visit(node: ts.Node): ts.Node {
-        node = ts.visitEachChild(node, visit, context);
-        if (node.kind === ts.SyntaxKind.BinaryExpression) {
-            const binary = node as ts.BinaryExpression;
-            if (binary.left.kind === ts.SyntaxKind.NumericLiteral
-            && binary.right.kind === ts.SyntaxKind.NumericLiteral) {
-                const left = binary.left as ts.NumericLiteral;
-                const leftVal = parseFloat(left.text);
-                const right = binary.right as ts.NumericLiteral;
-                const rightVal = parseFloat(right.text);
-                switch (binary.operatorToken.kind) {
-                    case ts.SyntaxKind.PlusToken:
-                        return ts.createLiteral(leftVal + rightVal);
-                    case ts.SyntaxKind.AsteriskToken:
-                        return ts.createLiteral(leftVal * rightVal);
-                    case ts.SyntaxKind.MinusToken:
-                        return ts.createLiteral(leftVal - rightVal);
-                }
-            }
-        }
-        return node;
-    }
-    return ts.visitNode(rootNode, visit);
-};
-
-// console.log("----------------");
-// const commentFinder = ts.createScanner(ts.ScriptTarget.ES2015, /*skipTrivia=*/false);
-// commentFinder.setText(`
-//     // first leading one-line comment
-//     // second leading one-line comment
-//     console.log(/* inline comment */ 'hello')
-//     // trailing comment
-// `);
-// let kind: ts.SyntaxKind;
-// while ((kind = commentFinder.scan()) != ts.SyntaxKind.EndOfFileToken) {
-//     console.log("kind:", ts.SyntaxKind[kind], "getTokenText:", commentFinder.getTokenText());
-// }
-// console.log("----------------");
-// commentFinder.setText(`
-//     // first leading one-line comment
-//     // second leading one-line comment
-//     console.log(/* inline comment */ 'hello')
-//     // trailing comment
-// `);
-// while ((kind = commentFinder.scan()) != ts.SyntaxKind.EndOfFileToken) {
-// console.log("kind:", ts.SyntaxKind[kind], "getTokenText:", commentFinder.getTokenText());
-// }
-// console.log("----------------");
+console.log("------------- nodes, including trivia:")
 
 const deadCodeTransformer = <T extends ts.Node>(context: ts.TransformationContext) => (rootNode: T) => {
     function visit(node: ts.Node, ind: string): ts.Node {
         node = ts.visitEachChild(node, (node: ts.Node) => visit(node, ind + "  "), context);
-        console.log(ind + ts.SyntaxKind[node.kind] + ":" + node.getFullText(sourceFile).replace(/\n/g, "\\n"));
-        if (ts.isIfStatement(node)) {
-            const children = node.getChildren(sourceFile);
-            children.forEach(child => console.log(child));
-        }
+        console.log(ind + ts.SyntaxKind[node.kind] + ":" + truncString(node.getFullText(sourceFile).replace(/\n/g, "\\n")));
         if (ts.isBlock(node)) {
             const statements = node.statements.map(statement => {
                 if (!ts.isIfStatement(statement)) {
@@ -149,7 +81,7 @@ const deadCodeTransformer = <T extends ts.Node>(context: ts.TransformationContex
 };
 
 const trResult: ts.TransformationResult<ts.SourceFile> = ts.transform<ts.SourceFile>(
-    sourceFile, [ mathTransformer, deadCodeTransformer ]
+    sourceFile, [ deadCodeTransformer ]
   );
 
 const transformedSourceFile: ts.SourceFile = trResult.transformed[0];
@@ -158,18 +90,6 @@ console.log("------------- printer.printFile(sourceFile)")
 console.log(printer.printFile(sourceFile));
 console.log("------------- printer.printFile(transformedSourceFile)");
 console.log(printer.printFile(transformedSourceFile));
-// xcxc comments are lost
+// xcxc some comments are lost
 
 trResult.dispose();
-
-let printed = "";
-function visitForPrinting(parent: ts.Node, node: ts.Node) {
-    printed += getText(node);
-    ts.forEachChild(node, (child: ts.Node) => {
-        visitForPrinting(node, child);
-    });
-}
-
-visitForPrinting(null, transformedSourceFile);
-console.log("-------------");
-console.log(printed);
